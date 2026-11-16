@@ -1,0 +1,17 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+.env*
+!.env.example
+*.p12
+*.p8
+*.mobileprovision
+*.ipa
+*.xcarchive
+ios/App/Pods/
+ios/App/build/
+ios/**/xcuserdata/
+ios/**/.swiftpm/
+ios/**/Package.resolved
+_privado/
