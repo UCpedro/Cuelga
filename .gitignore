@@ -13,5 +13,4 @@ ios/App/Pods/
 ios/App/build/
 ios/**/xcuserdata/
 ios/**/.swiftpm/
-ios/**/Package.resolved
 _privado/
