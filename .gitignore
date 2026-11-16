@@ -14,3 +14,4 @@ ios/App/build/
 ios/**/xcuserdata/
 ios/**/.swiftpm/
 _privado/
+.DS_Store
