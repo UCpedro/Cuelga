@@ -1,32 +1,29 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ApiError, CuelgaApi, newOperationId, type AiConsent, type MailMessage, type Mailbox, type UtilityStatus, type ReviewResult } from './api';
-import { apnsEnvironment, disablePush, enablePush, sessionStore, storeKit, type PushResult } from './native';
-import { ApplePurchases } from './apple-purchases';
-import { PremiumPanel } from './premium';
+import { apnsEnvironment, disablePush, enablePush, sessionStore, isNativeIos, type PushResult } from './native';
 import { IosLegalLinks } from './legal';
 import { forwardingCheck, forwardingCode, forwardingRemove } from './forwarding';
 import './style.css';
 
 const api = new CuelgaApi(sessionStore);
-const applePurchases = new ApplePurchases(api, storeKit);
 
 type View = 'loading' | 'welcome' | 'login' | 'register' | 'consent' | 'app' | 'finish-deletion' | 'offline' | 'disabled' | 'unavailable';
-type Tab = 'revisar' | 'buzon' | 'desvio' | 'premium' | 'datos';
+type Tab = 'revisar' | 'buzon' | 'desvio' | 'datos';
 
 const DATA_NOTICE = [
   'Cuelga recibe en un número suyo las llamadas que tú rechazas y desvías. Quien llama escucha un saludo y puede dejar un mensaje.',
   'Zadarma recibe esas llamadas y graba el mensaje. Si lo aceptas, Zadarma lo pasa a texto y Anthropic (Claude) recibe ese texto y resume qué te pedían.',
   'El borrado del audio en Zadarma y de posibles copias por correo requiere gestión manual del equipo; no es automático ni inmediato. El texto y el resumen se guardan 90 días. Puedes borrar cada mensaje o tu cuenta cuando quieras.',
   'Cuelga no lee tus contactos ni tus mensajes, y no escucha las llamadas que contestas: sólo recibe las que tú desvías al buzón.',
-  'Para revisar un SMS, WhatsApp o link, tú pegas el texto. No guardamos ese texto; sólo contamos las revisiones del día. Los links se revisan con reglas y consultas a URLhaus; si son acortados, se intenta conocer su destino.',
+  'Para revisar un SMS, WhatsApp o link, tú pegas el texto. No guardamos ese texto. Los links se revisan con reglas y consultas a URLhaus; si son acortados, se intenta conocer su destino.',
 ];
 
 const time = (iso: string) => new Date(iso).toLocaleString('es-CL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const titleFor = (m: MailMessage) => m.assessment === 'attention' ? 'Revisa antes de actuar' : m.assessment === 'unassessed' ? 'Hay un mensaje para ti' : 'Tienes un mensaje de voz';
 
 function PublicLinks() {
-  if (storeKit) return <IosLegalLinks />;
+  if (isNativeIos) return <IosLegalLinks />;
   return <aside className="public-links" aria-label="Información de Cuelga">
     <a href="https://cuelga-prototipo.vercel.app/privacidad" target="_blank" rel="noopener noreferrer">Privacidad</a>
     <a href="https://cuelga-prototipo.vercel.app/terminos" target="_blank" rel="noopener noreferrer">Términos</a>
@@ -81,6 +78,8 @@ function App() {
       if (error.code === 'PREMIUM_REQUIRED') {
         setStatus(s => s && { ...s, plan: { premium: false }, mailbox: { state: 'not_active', forwardingNumber: null } });
         setMailbox(null); setSelected(null);
+        setNotice('No pudimos acceder a tus llamadas. Vuelve a intentar.');
+        return;
       }
       if (error.status === 401 && error.code === 'AUTH_REQUIRED') {
         await sessionStore.clear();
@@ -135,26 +134,6 @@ function App() {
   }, [fail, startPush]);
 
   useEffect(() => { void load(); }, [load]);
-
-  useEffect(() => {
-    if (view !== 'app' || !applePurchases.available) return;
-    let stopped = false;
-    let cleanup = () => {};
-    const showFailure = (error: unknown) => {
-      if (stopped) return;
-      // Apple apagado no impide usar la app ni consultar un Premium previo.
-      if (error instanceof ApiError && error.status === 503) return;
-      setNotice('No pudimos actualizar tu compra de Apple. En Premium puedes tocar Restaurar para reintentar.');
-    };
-    void applePurchases.listen(refreshMailbox, showFailure).then(remove => { if (stopped) remove(); else cleanup = remove; }).catch(showFailure);
-    const reconcile = () => {
-      if (document.visibilityState !== 'visible') return;
-      void applePurchases.reconcile().then(async count => { if (!stopped && count > 0) await refreshMailbox(); }).catch(showFailure);
-    };
-    reconcile();
-    document.addEventListener('visibilitychange', reconcile);
-    return () => { stopped = true; cleanup(); applePurchases.invalidate(); document.removeEventListener('visibilitychange', reconcile); };
-  }, [view, refreshMailbox]);
 
   // Al volver a la app se actualizan el estado y la bandeja, sin depender de los avisos.
   useEffect(() => {
@@ -244,7 +223,6 @@ function App() {
   });
 
   async function signOutLocal(message: string) {
-    applePurchases.invalidate();
     pushCleanup.current?.(); pushCleanup.current = null;
     await disablePush();
     setStatus(null); setMailbox(null); setSelected(null); setTab('revisar'); setPushState(null); setDeviceConfirmed(false);
@@ -255,15 +233,13 @@ function App() {
   }
 
   const logout = () => submit(async () => {
-    applePurchases.invalidate();
     const reached = await api.logout();
     await signOutLocal(reached ? 'Saliste de tu cuenta.' : 'Saliste en este iPhone. No pudimos avisar al servidor; vuelve a entrar y salir cuando tengas conexión para cerrar las otras sesiones.');
   });
 
   const deleteAccount = () => submit(async () => {
     if (!window.confirm('¿Borrar tu cuenta y todos tus mensajes? No se puede deshacer.')) return;
-    applePurchases.invalidate();
-    setNotice('Borrando tu cuenta y tus mensajes de Cuelga. Una suscripción de Apple se cancela por separado en las suscripciones de tu cuenta de Apple.');
+    setNotice('Borrando tu cuenta y tus mensajes de Cuelga.');
     try { await api.deleteAccount(deletePassword, operationId); }
     catch (error) {
       // Sin respuesta no se sabe si se borró: se conserva el mismo comprobante para reintentar (vale una hora).
@@ -285,7 +261,7 @@ function App() {
       throw error;
     }
     setOperationId(newOperationId());
-    await signOutLocal('Se borraron tu cuenta y tus mensajes guardados en Cuelga. Si compraste con Apple, cancela su renovación en Ajustes de Apple → tu cuenta → Suscripciones. Esto no confirma el borrado del audio en Zadarma ni de posibles copias por correo: esa gestión sigue siendo manual.');
+    await signOutLocal('Se borraron tu cuenta y tus mensajes guardados en Cuelga. Esto no confirma el borrado del audio en Zadarma ni de posibles copias por correo: esa gestión sigue siendo manual.');
   });
 
   const deleteMessage = (id: string) => submit(async () => {
@@ -325,7 +301,7 @@ function App() {
       {view === 'welcome' && <section>
         <p className="eyebrow">REVISA ANTES DE ACTUAR</p>
         <h1 ref={heading} tabIndex={-1}>Antes de devolver la llamada.</h1>
-        <p className="intro">Crea tu cuenta para revisar el SMS, WhatsApp o link que te llegó. Con Premium también puedes reclamar llamadas desviadas al buzón y leer qué te pedían, si aceptas que se pasen a texto.</p>
+        <p className="intro">Crea tu cuenta para revisar el SMS, WhatsApp o link que te llegó. También puedes reclamar llamadas desviadas al buzón y leer qué te pedían, si aceptas que se pasen a texto. Cuelga es gratis.</p>
         <div className="actions">
           <button onClick={() => { setNotice(''); setView('login'); }}>Entrar</button>
           <button className="secondary" onClick={() => { setNotice(''); setView('register'); }}>Crear cuenta</button>
@@ -412,14 +388,13 @@ function App() {
                 : 'No pudimos consultar URLhaus. La revisión de este link está incompleta.'}</p>
             </details>}
           </div>)}
-          <p className="muted">{review.restantes === null ? 'Tu plan permite revisar sin tope diario.' : `Te quedan ${review.restantes} revisiones hoy.`}</p>
+          <p className="muted">Puedes revisar sin tope diario.</p>
         </section>}
       </section>}
 
       {signedIn && tab === 'buzon' && !current && <section>
         <h1 ref={heading} tabIndex={-1}>Tus llamadas</h1>
-        {!status?.plan.premium && <p className="intro">Reclamar llamadas y leer sus resúmenes es parte de Premium. Puedes seguir revisando mensajes y links en Revisar.</p>}
-        {!status?.plan.premium && <button className="secondary" onClick={() => setTab('premium')}>Ver Premium</button>}
+        {status && !status.plan.premium && <p className="intro">No pudimos acceder a tus llamadas ahora. Toca Actualizar llamadas para reintentar.</p>}
         {status?.plan.premium && !selected && <form onSubmit={e => { e.preventDefault(); void claimCall(); }}>
           <h2>Reclamar una llamada</h2>
           <p>Después de rechazar y desviar una llamada, escribe el número que te llamó. Buscamos la llamada sin reclamar más reciente de ese número en las últimas 24 horas. Si llamó con número oculto, no podemos identificarla.</p>
@@ -470,12 +445,7 @@ function App() {
             <li>Para quitarlo, marca <code>{forwardingRemove}</code>.</li>
           </ol>
           <p className="muted">La disponibilidad depende de tu compañía y plan. Consulta si permite desviar a este número; el tramo desviado puede tener costo. Cuelga no activa el desvío por ti ni abre la app Teléfono.</p>
-        </> : <p className="intro">El código de desvío está disponible con Premium. Puedes seguir revisando mensajes y links en Revisar.</p>}
-      </section>}
-
-      {signedIn && tab === 'premium' && <section>
-        <h1 ref={heading} tabIndex={-1}>Premium</h1>
-        <PremiumPanel api={api} purchases={applePurchases} premium={status?.plan.premium === true} refreshed={refreshMailbox} links={<PublicLinks />} />
+        </> : <p className="intro">No pudimos obtener el código de desvío. Vuelve a intentar más tarde.</p>}
       </section>}
 
       {signedIn && tab === 'datos' && <section className="privacy">
@@ -501,8 +471,6 @@ function App() {
         <button className="secondary" disabled={busy} onClick={() => void logout()}>Salir de la cuenta</button>
         <h2>Borrar tu cuenta</h2>
         <p>Se borran tu cuenta y tus mensajes guardados en Cuelga. No se puede deshacer y no necesitas escribir a soporte para iniciar el borrado.</p>
-        <p>Si compraste con Apple, borrar tu cuenta no cancela su renovación: cancela primero en Premium → Gestionar suscripción, o en Ajustes de Apple → tu cuenta → Suscripciones. Puedes borrar tu cuenta aunque no la canceles.</p>
-        {storeKit && <button className="secondary" disabled={busy} onClick={() => void submit(() => applePurchases.manage())}>Gestionar suscripción de Apple</button>}
         <p>El borrado del audio en Zadarma y de posibles copias por correo sigue siendo manual; borrar aquí no confirma su eliminación. Borrar tu cuenta tampoco desactiva el desvío de tu compañía: quítalo marcando <code>{forwardingRemove}</code> en Teléfono.</p>
         <form onSubmit={e => { e.preventDefault(); void deleteAccount(); }}>
           <Field id="del-pass" label="Escribe tu contraseña para confirmar" type="password" value={deletePassword} onChange={setDeletePassword} autoComplete="current-password" />
@@ -513,7 +481,7 @@ function App() {
       {['welcome', 'login', 'register', 'consent', 'finish-deletion'].includes(view) && <PublicLinks />}
       <p role="status" className="status">{notice}</p>
     </main>
-    {signedIn && <nav aria-label="Secciones de Cuelga">{([['revisar', 'Revisar'], ['buzon', 'Llamadas'], ['desvio', 'Desvío'], ['premium', 'Premium'], ['datos', 'Tus datos']] as const).map(([key, label]) =>
+    {signedIn && <nav aria-label="Secciones de Cuelga">{([['revisar', 'Revisar'], ['buzon', 'Llamadas'], ['desvio', 'Desvío'], ['datos', 'Tus datos']] as const).map(([key, label]) =>
       <button key={key} disabled={busy} aria-current={tab === key ? 'page' : undefined} onClick={() => { setTab(key); setSelected(null); setNotice(''); }}>{label}</button>)}</nav>}
   </div>;
 }

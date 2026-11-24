@@ -296,7 +296,7 @@ test('revisión y reclamo sólo usan rutas móviles con bearer; pendiente se act
   assert.ok(s.calls.every(c => c.auth === `Bearer ${fresh().accessToken}`));
 });
 
-test('sin sesión no intenta revisar, reclamar ni listar Premium', async () => {
+test('sin sesión no intenta revisar, reclamar ni listar llamadas', async () => {
   const s = server({});
   const api = new CuelgaApi(memoryStore(), s.fetcher, base, () => now);
   for (const action of [() => api.review('texto'), () => api.claim('912345678'), () => api.calls(), () => api.utilityStatus()]) {
@@ -305,7 +305,7 @@ test('sin sesión no intenta revisar, reclamar ni listar Premium', async () => {
   assert.equal(s.calls.length, 0);
 });
 
-test('texto vacío, cupo agotado, sin Premium y servicio caído conservan código y reintento explícito', async () => {
+test('errores de revisión, acceso y servicio conservan código y reintento explícito', async () => {
   for (const [path, code, http, action] of [
     ['/mensajes/revisar', 'TEXT_EMPTY', 422, (api: CuelgaApi) => api.review('')],
     ['/mensajes/revisar', 'QUOTA_EXCEEDED', 429, (api: CuelgaApi) => api.review('Mensaje de prueba')],
@@ -332,7 +332,7 @@ test('revisión sin red falla y permite reintentar; una sesión vencida rechazad
   assert.equal(expired.calls.length, 1);
 });
 
-test('validadores rechazan Premium inventado, resultados vacíos o seguros y duración inválida', () => {
+test('validadores rechazan estados incoherentes, resultados vacíos o seguros y duración inválida', () => {
   assert.equal(parseUtilityStatus(utility).plan.premium, true);
   assert.throws(() => parseUtilityStatus({ ...utility, plan: { premium: 'true' } }));
   assert.throws(() => parseUtilityStatus({ ...utility, plan: { premium: false } }));

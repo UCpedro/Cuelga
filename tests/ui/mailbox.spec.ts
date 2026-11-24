@@ -57,7 +57,7 @@ test('borrado: contraseña mala conserva cuenta; sin red ofrece reintento y éxi
   await expect(page.getByRole('heading', { name: 'Antes de devolver la llamada.' })).toBeVisible();
 });
 
-async function mockServer(page: Page, opts: { consent?: string; offline?: boolean; premium?: boolean; reviewCode?: string; expired?: boolean; failPoll?: boolean } = {}) {
+async function mockServer(page: Page, opts: { consent?: string; offline?: boolean; reviewCode?: string; expired?: boolean; failPoll?: boolean; sinPremium?: boolean } = {}) {
   let consent = opts.consent ?? 'not_requested';
   let claimed = false;
   let callsAfterClaim = 0;
@@ -76,7 +76,7 @@ async function mockServer(page: Page, opts: { consent?: string; offline?: boolea
     switch (path) {
       case '/sesion/entrar': return json(200, { ok: true, session });
       case '/sesion/registro': expect(route.request().postDataJSON()).not.toHaveProperty('invitation'); return json(201, { ok: true, session });
-      case '/llamadas/estado': return json(200, { ok: true, account: { identifier: 'ana@ejemplo.invalid', aiConsent: consent }, plan: { premium: opts.premium === true }, mailbox: { state: opts.premium ? 'active' : 'not_active', forwardingNumber: opts.premium ? '+56225830699' : null } });
+      case '/llamadas/estado': return json(200, { ok: true, account: { identifier: 'ana@ejemplo.invalid', aiConsent: consent }, plan: { premium: !opts.sinPremium }, mailbox: opts.sinPremium ? { state: 'not_active', forwardingNumber: null } : { state: 'active', forwardingNumber: '+56225830699' } });
       case '/consentimiento-ia': consent = route.request().postDataJSON().accepted ? 'accepted' : 'declined'; return json(200, { ok: true, aiConsent: consent });
       case '/llamadas': {
         const ready = claimed && callsAfterClaim++ > 0;
@@ -87,7 +87,7 @@ async function mockServer(page: Page, opts: { consent?: string; offline?: boolea
       case '/llamadas/reclamar': claimed = true; return json(202, { ok: true, id: '22222222-2222-4222-8222-222222222222', textStatus: 'pending' });
       case '/mensajes/revisar':
         if (opts.reviewCode) { const code = opts.reviewCode; opts.reviewCode = undefined; return json(code === 'QUOTA_EXCEEDED' ? 429 : 503, { ok: false, code, error: code === 'QUOTA_EXCEEDED' ? 'Usaste tus 20 revisiones de hoy.' : 'El servicio no está disponible ahora.' }); }
-        return json(200, { ok: true, nivel: 'precaucion', senales: [{ id: 'codigo', titulo: 'Te piden un código', explicacion: 'No compartas códigos.', fuerza: 'media' }], fragmentos: [], links: [], restantes: 19 });
+        return json(200, { ok: true, nivel: 'precaucion', senales: [{ id: 'codigo', titulo: 'Te piden un código', explicacion: 'No compartas códigos.', fuerza: 'media' }], fragmentos: [], links: [], restantes: null });
       case '/sesion/salir': return json(200, { ok: true });
       default: return json(404, { ok: false, code: 'NOT_FOUND' });
     }
@@ -121,7 +121,7 @@ test('recibo no recuperable permite reingresar y otra cuenta recibe una operaci�
   expect(operations[0]).not.toBe(operations[1]);
 });
 
-test('entrar con correo, rechazar IA, revisar disponible sin Premium y salir', async ({ page }) => {
+test('entrar con correo, rechazar IA, usar llamadas y revisión gratis y salir', async ({ page }) => {
   const seen = await mockServer(page);
   await page.goto('/');
   await page.getByRole('button', { name: 'Entrar' }).click();
@@ -133,12 +133,13 @@ test('entrar con correo, rechazar IA, revisar disponible sin Premium y salir', a
   await expect(page.getByText('Anthropic (Claude)', { exact: false }).first()).toBeVisible();
   await page.getByRole('button', { name: 'No, sólo avisarme' }).click();
   await expect(page.getByRole('heading', { name: 'Revisar mensaje o link' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Secciones de Cuelga' }).getByRole('button'))
+    .toHaveText(['Revisar', 'Llamadas', 'Desvío', 'Tus datos']);
   await page.getByRole('button', { name: 'Llamadas', exact: true }).click();
-  await expect(page.getByText('es parte de Premium', { exact: false }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Reclamar llamada', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Reclamar una llamada', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reclamar llamada', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Desvío', exact: true }).click();
-  await expect(page.getByText('El código de desvío está disponible con Premium.', { exact: false })).toBeVisible();
-  await expect(page.locator('code.manual-code')).toHaveCount(0);
+  await expect(page.locator('code.manual-code')).toHaveText('**67*+56225830699#');
   await page.getByRole('button', { name: 'Tus datos', exact: true }).click();
   await expect(page.getByText('Con tu permiso, Zadarma', { exact: false })).toBeVisible();
   await expect(page.getByText('No aceptaste', { exact: false })).toBeVisible();
@@ -146,6 +147,8 @@ test('entrar con correo, rechazar IA, revisar disponible sin Premium y salir', a
   await expect(page.getByRole('heading', { name: 'Antes de devolver la llamada.' })).toBeVisible();
   expect(seen).toContain('POST /consentimiento-ia');
   expect(seen).toContain('POST /sesion/salir');
+  expect(seen).toContain('GET /llamadas');
+  expect(seen.some(call => call.includes('/apple/'))).toBe(false);
 });
 
 test('registro sin invitación → vacío → revisión prudente; no guarda texto pegado', async ({ page }) => {
@@ -157,12 +160,12 @@ test('registro sin invitación → vacío → revisión prudente; no guarda text
   await page.getByLabel('Contraseña', { exact: true }).fill('contraseña-larga');
   await page.getByLabel('Leí y acepto el aviso de datos.').check();
   await page.getByRole('button', { name: 'Crear cuenta', exact: true }).click();
-  await page.getByRole('button', { name: 'Revisar', exact: true }).first().click();
+  await page.locator('form').getByRole('button', { name: 'Revisar', exact: true }).click();
   await expect(page.getByRole('status').last()).toContainText('Pega el mensaje');
   await page.getByLabel('Mensaje o link', { exact: true }).fill('No compartas el código de Banco Ejemplo.');
-  await page.getByRole('button', { name: 'Revisar', exact: true }).first().click();
+  await page.locator('form').getByRole('button', { name: 'Revisar', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Revisa con precaución' })).toBeVisible();
-  await expect(page.getByText('Te quedan 19 revisiones hoy.')).toBeVisible();
+  await expect(page.getByText('Puedes revisar sin tope diario.')).toBeVisible();
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain('Banco Ejemplo');
   await page.getByRole('button', { name: 'Limpiar', exact: true }).click();
   await expect(page.getByLabel('Mensaje o link', { exact: true })).toHaveValue('');
@@ -174,17 +177,17 @@ for (const reviewCode of ['QUOTA_EXCEEDED', 'SERVICE_UNAVAILABLE']) {
     await mockServer(page, { consent: 'declined', reviewCode });
     await page.goto('/');
     await page.getByLabel('Mensaje o link', { exact: true }).fill('Mensaje con un código de prueba.');
-    await page.getByRole('button', { name: 'Revisar', exact: true }).first().click();
+    await page.locator('form').getByRole('button', { name: 'Revisar', exact: true }).click();
     await expect(page.getByRole('status').last()).toContainText(reviewCode === 'QUOTA_EXCEEDED' ? '20 revisiones' : 'no está disponible');
     await page.getByRole('button', { name: 'Reintentar revisión', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Revisa con precaución' })).toBeVisible();
   });
 }
 
-test('Premium: código manual, reclamo, pendiente → caída transitoria → resumen actualizado', async ({ page }) => {
+test('Llamadas gratis: código manual, reclamo, pendiente → caída transitoria → resumen actualizado', async ({ page }) => {
   await page.clock.install();
   await page.addInitScript(s => localStorage.setItem('CapacitorStorage.cuelga.sesion.v1', JSON.stringify(s)), session);
-  await mockServer(page, { consent: 'accepted', premium: true, failPoll: true });
+  await mockServer(page, { consent: 'accepted', failPoll: true });
   await page.goto('/');
   await page.getByRole('button', { name: 'Desvío', exact: true }).click();
   await expect(page.locator('code.manual-code')).toHaveText('**67*+56225830699#');
@@ -207,12 +210,12 @@ test('la revisión en curso bloquea editar el texto al que pertenece el resultad
   const gate = new Promise<void>(resolve => { release = resolve; });
   await page.route(`${api}/mensajes/revisar`, async route => {
     await gate;
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, nivel: 'sin-senales', senales: [], links: [], restantes: 19 }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, nivel: 'sin-senales', senales: [], links: [], restantes: null }) });
   });
   await page.goto('/');
   const field = page.getByLabel('Mensaje o link', { exact: true });
   await field.fill('Hola, nos vemos mañana.');
-  await page.getByRole('button', { name: 'Revisar', exact: true }).first().click();
+  await page.locator('form').getByRole('button', { name: 'Revisar', exact: true }).click();
   await expect(field).toBeDisabled();
   release();
   await expect(page.getByRole('heading', { name: 'No encontramos señales de alerta' })).toBeVisible();
@@ -248,4 +251,17 @@ test('sin conexión dice que no pudo conectar y no muestra mensajes', async ({ p
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Sin conexión' })).toBeVisible();
   await expect(page.locator('ul.messages')).toHaveCount(0);
+});
+
+// Plan K (D88): si un servidor viejo dijera premium=false, la app avisa y no ofrece comprar.
+test('servidor con premium=false: Llamadas avisa y no ofrece compras', async ({ page }) => {
+  await mockServer(page, { consent: 'declined', sinPremium: true });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entrar' }).click();
+  await page.getByLabel('Correo', { exact: true }).fill('ana@ejemplo.invalid');
+  await page.getByLabel('Contraseña', { exact: true }).fill('contraseña-larga');
+  await page.locator('form').getByRole('button', { name: 'Entrar', exact: true }).click();
+  await page.getByRole('button', { name: 'Llamadas', exact: true }).click();
+  await expect(page.getByText('No pudimos acceder a tus llamadas ahora.', { exact: false })).toBeVisible();
+  await expect(page.locator('body')).not.toContainText(/Premium|suscrip|Comprar|Restaurar/i);
 });

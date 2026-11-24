@@ -4,8 +4,6 @@ input{font:inherit;width:100%;min-height:48px;border:1px solid #8a96a8;border-ra
 /* Enlaces públicos disponibles antes del registro y dentro de Tus datos. */
 .public-links { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1.5rem 0; }
 .public-links a { padding: .5rem 0; text-decoration: underline; }
-.premium-content .actions { margin-top: 1.5rem; }
-.premium-price { font-size: 1.5rem; font-weight: 700; }
 .legal-document { color: #182c47; background: #fffdf7; border: 1px solid #8a969e; border-radius: 12px; max-width: 620px; width: calc(100% - 32px); max-height: 85dvh; padding: 24px; overflow-y: auto; }
 .legal-document::backdrop { background: #182c4770; }
 .legal-document a { overflow-wrap: anywhere; }

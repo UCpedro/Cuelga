@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { CuelgaApi, ApiError, type AppleConfig, type SessionStore } from '../src/api';
+import { ApiError, type AppleConfig } from '../src/api';
 import { ApplePurchases, subscriptionPeriod, type AppleProduct, type AppleServer, type AppleTransaction, type StoreKitBridge } from '../src/apple-purchases';
 import { PremiumContent } from '../src/premium';
 import { IosLegalLinks } from '../src/legal';
@@ -144,26 +144,9 @@ test('producto sin precio, de otro id o sin período válido deja de ofrecer com
   }
 });
 
-test('cliente Apple manda sólo recibo firmado con bearer; premium=true no forma parte del cuerpo', async () => {
-  const seen: { path: string; body: unknown; authorization: string | null }[] = [];
-  const store: SessionStore = { async load() { return { accessToken: 'aa.bb.cc', refreshToken: 'refresh-long', expiresAt: Math.floor(Date.now() / 1000) + 3600 }; }, async save() {}, async clear() {} };
-  const api = new CuelgaApi(store, async (url, init) => {
-    seen.push({ path: url, body: init.body ? JSON.parse(String(init.body)) : null, authorization: new Headers(init.headers).get('authorization') });
-    return Response.json(url.endsWith('/config') ? { ok: true, ...config } : { ok: true, premium: true });
-  }, 'https://servidor.invalid');
-  assert.deepEqual(await api.appleConfig(), config);
-  assert.equal(await api.appleTransaction(transaction.signedTransaction), true);
-  assert.equal(await api.appleTransaction(transaction.signedTransaction, true), true);
-  assert.deepEqual(seen.map(s => s.path), ['https://servidor.invalid/apple/config', 'https://servidor.invalid/apple/transaccion', 'https://servidor.invalid/apple/restaurar']);
-  assert.ok(seen.every(s => s.authorization === 'Bearer aa.bb.cc'));
-  assert.deepEqual(seen[1]!.body, { signedTransaction: transaction.signedTransaction });
-  assert.deepEqual(seen[2]!.body, { signedTransaction: transaction.signedTransaction });
-});
-
 test('interruptor apagado conserva 503 y no ofrece una compra ni un precio', async () => {
-  const store: SessionStore = { async load() { return { accessToken: 'aa.bb.cc', refreshToken: 'refresh-long', expiresAt: Math.floor(Date.now() / 1000) + 3600 }; }, async save() {}, async clear() {} };
-  const api = new CuelgaApi(store, async () => Response.json({ ok: false, code: 'APPLE_DISABLED', error: 'Compras no disponibles.' }, { status: 503 }), 'https://servidor.invalid');
-  const f = fixture(); const purchases = new ApplePurchases(api, f.fixture.bridge);
-  await assert.rejects(purchases.purchase(), (error: unknown) => error instanceof ApiError && error.status === 503);
+  const f = fixture();
+  f.fixture.server.appleConfig = async () => { throw new ApiError('APPLE_DISABLED', 503, 'Compras no disponibles.'); };
+  await assert.rejects(f.purchases.purchase(), (error: unknown) => error instanceof ApiError && error.code === 'APPLE_DISABLED' && error.status === 503);
   assert.deepEqual(f.events, []);
 });

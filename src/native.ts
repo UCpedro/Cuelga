@@ -1,9 +1,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { createSessionStore, memorySessionStorage, type SecureSessionStorage } from './session-store';
-import type { StoreKitBridge } from './apple-purchases';
 
-export const storeKit = Capacitor.getPlatform() === 'ios' && Capacitor.isNativePlatform()
-  ? registerPlugin<StoreKitBridge>('CuelgaStoreKit') : null;
+export const isNativeIos = Capacitor.getPlatform() === 'ios' && Capacitor.isNativePlatform();
 
 const keychain = registerPlugin<SecureSessionStorage>('CuelgaSession');
 // En iOS el plugin debe existir: nunca degradar silenciosamente a almacenamiento sin protección.

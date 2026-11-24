@@ -16,6 +16,7 @@ export interface Status {
   mailbox: { state: MailboxState; forwardingNumber: string | null };
 }
 export interface UtilityStatus extends Status { plan: { premium: boolean } }
+// Contrato conservado para los módulos de compras que quedaron sin uso.
 export interface AppleConfig {
   appAccountToken: string;
   productId: string;
@@ -253,19 +254,6 @@ export class CuelgaApi {
   async status() { return parseStatus(await this.authed('/estado', 'GET')); }
   async mailbox() { return parseMailbox(await this.authed('/buzon', 'GET')); }
   async utilityStatus() { return parseUtilityStatus(await this.authed('/llamadas/estado', 'GET')); }
-  async appleConfig(): Promise<AppleConfig> {
-    const data = await this.authed('/apple/config', 'GET');
-    if (typeof data.appAccountToken !== 'string' || !uuid.test(data.appAccountToken)
-      || typeof data.productId !== 'string' || !/^[A-Za-z0-9._-]{1,200}$/.test(data.productId)
-      || typeof data.premium !== 'boolean' || !['mp', 'apple', 'none'].includes(data.source as string)
-      || (data.premium ? data.source === 'none' : data.source !== 'none')) throw invalid();
-    return { appAccountToken: data.appAccountToken, productId: data.productId, premium: data.premium, source: data.source as AppleConfig['source'] };
-  }
-  async appleTransaction(signedTransaction: string, restore = false): Promise<boolean> {
-    const data = await this.authed(restore ? '/apple/restaurar' : '/apple/transaccion', 'POST', { signedTransaction });
-    if (typeof data.premium !== 'boolean') throw invalid();
-    return data.premium;
-  }
   async calls() { return parseMailbox(await this.authed('/llamadas', 'GET')); }
   async review(texto: string) { return parseReview(await this.authed('/mensajes/revisar', 'POST', { texto })); }
   async claim(caller: string): Promise<string> {

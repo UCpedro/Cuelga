@@ -1,5 +1,9 @@
 # Cuelga para iPhone — app conectada (D60)
 
+> **Desde la D88 (21-11-2026) la app no tiene compras:** 4 pestañas (Revisar, Llamadas, Desvío, Tus datos), sin StoreKit en
+> ejecución y sin tope diario. `src/premium.tsx`, `src/apple-purchases.ts` y `CuelgaStoreKitPlugin.swift` se conservan sin
+> uso. Lo que sigue sobre compras con Apple, la pantalla Premium, Restaurar, Gestionar y el cupo diario es histórico.
+
 Aplicación Capacitor con interfaz React empaquetada. **Desde el 09-11-2026 ya no trae bandeja de ejemplo:** entra con
 una cuenta de Cuelga y le pregunta al servidor (`https://cuelga-prototipo.vercel.app/api/movil/v1`) según el
 [contrato app ↔ servidor](../innova/cuelga/app/CONTRATO-APP-SERVIDOR.md). El cliente del Plan H usa las rutas nuevas de
